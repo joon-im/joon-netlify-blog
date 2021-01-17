@@ -65,7 +65,7 @@ A good ETS model will have residuals with the following properties:
 
 - **Essential:** The residuals should have zero mean. If not, then the forecasts are considered biased and may require adjustment. Check the residuals plot. 
 - **Essential:** The residuals should be uncorrelated. They will resemble white noise because the forecasting method captured all the available information. Check the ACF plot. 
-- **Non-Essential**: The residuals have constant variance and are normally distributed. If they don't, then the intervals will be larger and less accurate. Check the histogram plot.
+- **Non-Essential**: The residuals have constant variance and are normally distributed. If they don't, then the prediction intervals will be larger and less accurate. Check the histogram plot.
 
 Once the residuals have been examined, a good metric for finding the best-fitting model is to minimize the bias-corrected Akaike's Information Criterion (AICc). This process is similar to cross-validation but is faster and may be a better option for really long time series data. To learn more about how to use information criteria for model selection, read Professor Hyndman's explanation [here](https://otexts.com/fpp3/estimation-and-model-selection.html). 
 
@@ -81,7 +81,7 @@ The most basic ETS model estimates the level over time as a function of the most
 # Fit and forecast marathon winning times with an SES model 
 fc <- fpp2::marathon %>% ses(h = 10)
 
-# Plot forecasts + one-step forecasts for the training data
+# Plot fitted model and forecasts
 autoplot(fc) + autolayer(fitted(fc))
 ```
 
@@ -98,7 +98,7 @@ fit <- m_tsbl %>%
 # Forecast for 10 years into the future
 fc <- fit %>% forecast(h = 10)
 
-# Plot forecasts + one-step forecasts for the training data
+# Plot fitted model and forecasts
 fc %>%
   autoplot(m_tsbl) +   # Plot actual data 
   geom_line(aes(y = .fitted, colour = "Fitted"),  
@@ -111,7 +111,7 @@ fc %>%
 
 ### 2.3 modeltime Method: SES Model
 
-```{r}
+```{r warning=FALSE}
 # Convert to tibble, convert index with lubridate function
 m_tbl <- fpp2::marathon %>% 
   tk_tbl(rename_index = "year") %>%
@@ -119,7 +119,7 @@ m_tbl <- fpp2::marathon %>%
 
 # Fit a SES model: additive errors, no trend, no seasonality
 model_fit_ets <- exp_smoothing(
-    seasonal_period = "none",
+    seasonal_period = 1,   # Yearly data = 1 period
     error = "additive",
     trend = "none",
     season = "none"
@@ -130,7 +130,7 @@ model_fit_ets <- exp_smoothing(
 # Create table of models used
 ses_model_tbl <- modeltime_table(model_fit_ets)
   
-# Calibrate the models to produce prediction intervals
+# Calibrate the models to produce confidence intervals
 calibration_tbl <- ses_model_tbl %>%
   modeltime_calibrate(new_data = m_tbl)
 
@@ -241,7 +241,7 @@ model_fit_damped <- exp_smoothing(
   set_engine(engine = "ets") %>%
   fit(Pop ~ Year, data = us_population_tbl)
 
-# Create table of models to u
+# Create table of models to use
 holt_models_tbl <- modeltime_table(model_fit_holt, model_fit_damped)
   
 # Calibrate the models to produce confidence intervals
@@ -262,7 +262,7 @@ calibration_tbl %>%
   )
 ```
 
-> 💡 ***Methods with a damped trend have proven to be useful when automatically generating forecasts for many series at a time.***
+> 💡 ***Holt-Winters method with a damped trend have proven to be useful when automatically generating forecasts for many series at a time.***
 
 # 4. Methods with Trend and Seasonality
 
@@ -342,7 +342,7 @@ fc %>%
 
 ### 4.5 modeltime Method: Holt-Winters’ Multiplicative Method
 
-```{r}
+```{r warning=FALSE}
 # Convert ts data to tibble
 a10_tbl <- fpp2::a10 %>%
   tk_tbl() %>%
@@ -379,15 +379,15 @@ calibration_tbl %>%
   )
 ```
 
-> 💡 ***The Holt-Winters' methods work well on time series data with a trend and seasonal component.***
+> 💡 ***The Holt-Winters' additive & multiplicative methods work well on time series data with a trend and seasonal component.***
 
-# 5. Automatic Forecasting with Exponential Smoothing
+# 5. Automatic Forecasting with Exponential Smoothing Models
 
 Let's take a step back and think about what a time series is for a moment. A *time series* is essentially data that is created by some process in the world: a so-called "true" model. A *time series model* attempts to replicate that process as closely as possible by using up all of the available information given by the process. 
 
 ETS models allow us to use a process called **maximum likelihood estimation** (the probability of the data arising from a model) to optimize parameters for automatically choosing a model. It is equivalent to minimizing the sum of squared errors. 
 
-The auto-ETS algorithm utilized by all three frameworks selects a model by minimizing the bias-corrected Akaike's Information Criterion (AICc). The AICc estimates the quality of a model by determining how much information has been lost when applying it to the data: if a model loses *less* information, then the model is of *higher* quality. In other words, the lower the value, the better. This process is similar to cross-validation but is much faster, especially on really long time series data. 
+The auto-ETS algorithm utilized by all three frameworks selects a model by minimizing the bias-corrected Akaike's Information Criterion (AICc). The AICc estimates the quality of a model by determining how much information has been lost when applying it to the data: if a model loses *less* information, then the model is of *higher* quality. In other words, the lower the AICc value, the better the model. This process is similar to cross-validation but is much faster, especially on really long time series data. 
 
 ### 5.1 fpp2 Method: Automatic Exponential Smoothing
 
@@ -415,7 +415,7 @@ summary(fit)
 
 > ***The algorithm chose an ETS(A,A,N) model which is Holt’s linear method with additive errors and additive trend but no seasonal component.***
 
-Now use a Ljung-Box test to check if the residuals are independent i.e. white noise which would indicate that the model has extracted as much information as it possibly can from the data. 
+Now use a [Ljung-Box test](https://robjhyndman.com/hyndsight/ljung-box-test/) to check if the residuals are independent i.e. white noise which would indicate that the model has extracted as much information as it possibly can from the data. 
 
 ```{r}
 # If p > 0.05, then residuals are white noise 
@@ -449,7 +449,7 @@ h02_tsbl%>%
 ```
 
 ```{r}
-# Automatically fit an exponential smoothing model to training data
+# Automatically fit an exponential smoothing model
 fit_h02 <- h02_tsbl %>% 
   model(ETS(value))
 
@@ -488,7 +488,7 @@ fit_h02 %>%
 
 > ***The forecasts account for trend and seasonality along with good prediction intervals. But is it the best model?***
 
-### 2.6 modeltime Method: Automatic Exponential Smoothing
+### 5.3 modeltime Method: Automatic Exponential Smoothing
 
 ```{r}
 # Convert from ts to tibble
@@ -553,7 +553,7 @@ calibration_tbl %>%
   )
 ```
 
-> 💡 ***Remember, although the auto-ETS algorithm chose a reasonable model for this seasonal data, there may be a better performing model out there whose residuals more closely resemble white noise i.e. it has extracted more information from the "true" model.***
+> 💡 ***Although the auto-ETS algorithm chose a reasonable model for this seasonal data, there may be a better performing model out there whose residuals more closely resemble white noise. Then again, maybe not.***
 
 # 6. When Not to Use Exponential Smoothing
 
@@ -654,10 +654,11 @@ calibration_tbl %>%
 # 7. Conclusions About Exponential Smoothing Models
 
 - Exponential smoothing models combine Error, Trend, and Season components to fit time series data.
-- If the data shows a trend, then you apply an additive component. If the data varies exponentially, then you apply a multiplicative component. 
+- If the data shows a trend, then you can apply an additive component. If the data varies exponentially, then you apply a multiplicative component. 
 - Just like with trend, if the data shows seasonal patterns, then you can apply an additive or multiplicative component. 
+- If the residuals look like white noise, then the model has used up as much information as possible in the data; however, that does not necessarily mean it is the best model out there. 
 
-ETS models ignore random variation in favor of a smoothing process which can sometimes lead to problematic forecasts. They also cannot be applied to data with a cyclic pattern. However, ETS models can be computed quickly and generalize well to a diverse set of time series data. They are especially useful for quickly forecasting on univariate data and should be a tool in every forecaster's toolbox. 
+ETS models ignore random variation in favor of a smoothing process which means their forecasts will lag behind as the trend increases or decreases over time. They also cannot be applied to data with a cyclic pattern. However, ETS models can be computed quickly and generalize well to a diverse set of time series data. They are especially useful for quickly forecasting on univariate data and should be included in every forecaster's toolbox. 
 
 
 

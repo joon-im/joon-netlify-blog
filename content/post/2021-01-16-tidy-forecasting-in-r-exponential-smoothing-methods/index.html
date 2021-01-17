@@ -56,7 +56,7 @@ library(cowplot)      # Arranging plots</code></pre>
 <ul>
 <li><strong>Essential:</strong> The residuals should have zero mean. If not, then the forecasts are considered biased and may require adjustment. Check the residuals plot.</li>
 <li><strong>Essential:</strong> The residuals should be uncorrelated. They will resemble white noise because the forecasting method captured all the available information. Check the ACF plot.</li>
-<li><strong>Non-Essential</strong>: The residuals have constant variance and are normally distributed. If they don’t, then the intervals will be larger and less accurate. Check the histogram plot.</li>
+<li><strong>Non-Essential</strong>: The residuals have constant variance and are normally distributed. If they don’t, then the prediction intervals will be larger and less accurate. Check the histogram plot.</li>
 </ul>
 <p>Once the residuals have been examined, a good metric for finding the best-fitting model is to minimize the bias-corrected Akaike’s Information Criterion (AICc). This process is similar to cross-validation but is faster and may be a better option for really long time series data. To learn more about how to use information criteria for model selection, read Professor Hyndman’s explanation <a href="https://otexts.com/fpp3/estimation-and-model-selection.html">here</a>.</p>
 <blockquote>
@@ -72,7 +72,7 @@ library(cowplot)      # Arranging plots</code></pre>
 <pre class="r"><code># Fit and forecast marathon winning times with an SES model 
 fc &lt;- fpp2::marathon %&gt;% ses(h = 10)
 
-# Plot forecasts + one-step forecasts for the training data
+# Plot fitted model and forecasts
 autoplot(fc) + autolayer(fitted(fc))</code></pre>
 <p><img src="staticunnamed-chunk-1-1.png" width="672" /></p>
 </div>
@@ -88,7 +88,7 @@ fit &lt;- m_tsbl %&gt;%
 # Forecast for 10 years into the future
 fc &lt;- fit %&gt;% forecast(h = 10)
 
-# Plot forecasts + one-step forecasts for the training data
+# Plot fitted model and forecasts
 fc %&gt;%
   autoplot(m_tsbl) +   # Plot actual data 
   geom_line(aes(y = .fitted, colour = &quot;Fitted&quot;),  
@@ -109,18 +109,18 @@ m_tbl &lt;- fpp2::marathon %&gt;%
 
 # Fit a SES model: additive errors, no trend, no seasonality
 model_fit_ets &lt;- exp_smoothing(
-    seasonal_period = &quot;none&quot;,
+    seasonal_period = 1,   # Yearly data = 1 period
     error = &quot;additive&quot;,
     trend = &quot;none&quot;,
     season = &quot;none&quot;
     ) %&gt;%
   set_engine(engine = &quot;ets&quot;) %&gt;%
-  fit(value ~ year, data = m_tbl)</code></pre>
-<pre><code>## Using period = 1 (no seasonal period).</code></pre>
-<pre class="r"><code># Create table of models used
+  fit(value ~ year, data = m_tbl)
+
+# Create table of models used
 ses_model_tbl &lt;- modeltime_table(model_fit_ets)
   
-# Calibrate the models to produce prediction intervals
+# Calibrate the models to produce confidence intervals
 calibration_tbl &lt;- ses_model_tbl %&gt;%
   modeltime_calibrate(new_data = m_tbl)
 
@@ -136,8 +136,6 @@ calibration_tbl %&gt;%
      .interactive      = FALSE,
      .title = &quot;Boston marathon winning times with 10-year SES forecast&quot;
   )</code></pre>
-<pre><code>## Warning in max(ids, na.rm = TRUE): no non-missing arguments to max; returning -
-## Inf</code></pre>
 <p><img src="staticunnamed-chunk-3-1.png" width="672" /></p>
 <blockquote>
 <p><strong><em>Note that <code>fpp2</code> and <code>fpp3</code> frameworks use prediction intervals but <code>modeltime</code> uses confidence intervals. To understand the difference, click <a href="https://www.graphpad.com/support/faq/the-distinction-between-confidence-intervals-prediction-intervals-and-tolerance-intervals/">here</a>.</em></strong></p>
@@ -233,7 +231,7 @@ model_fit_damped &lt;- exp_smoothing(
   set_engine(engine = &quot;ets&quot;) %&gt;%
   fit(Pop ~ Year, data = us_population_tbl)
 
-# Create table of models to u
+# Create table of models to use
 holt_models_tbl &lt;- modeltime_table(model_fit_holt, model_fit_damped)
   
 # Calibrate the models to produce confidence intervals
@@ -254,7 +252,7 @@ calibration_tbl %&gt;%
   )</code></pre>
 <p><img src="staticunnamed-chunk-6-1.png" width="672" /></p>
 <blockquote>
-<p>💡 <strong><em>Methods with a damped trend have proven to be useful when automatically generating forecasts for many series at a time.</em></strong></p>
+<p>💡 <strong><em>Holt-Winters method with a damped trend have proven to be useful when automatically generating forecasts for many series at a time.</em></strong></p>
 </blockquote>
 </div>
 </div>
@@ -367,19 +365,17 @@ calibration_tbl %&gt;%
      .interactive      = FALSE,
      .title = &quot;Forecasting monthly expenditure on anti-diabetic drugs using HW multiplicative method&quot;
   )</code></pre>
-<pre><code>## Warning in max(ids, na.rm = TRUE): no non-missing arguments to max; returning -
-## Inf</code></pre>
 <p><img src="staticunnamed-chunk-11-1.png" width="672" /></p>
 <blockquote>
-<p>💡 <strong><em>The Holt-Winters’ methods work well on time series data with a trend and seasonal component.</em></strong></p>
+<p>💡 <strong><em>The Holt-Winters’ additive &amp; multiplicative methods work well on time series data with a trend and seasonal component.</em></strong></p>
 </blockquote>
 </div>
 </div>
-<div id="automatic-forecasting-with-exponential-smoothing" class="section level1">
-<h1>5. Automatic Forecasting with Exponential Smoothing</h1>
+<div id="automatic-forecasting-with-exponential-smoothing-models" class="section level1">
+<h1>5. Automatic Forecasting with Exponential Smoothing Models</h1>
 <p>Let’s take a step back and think about what a time series is for a moment. A <em>time series</em> is essentially data that is created by some process in the world: a so-called “true” model. A <em>time series model</em> attempts to replicate that process as closely as possible by using up all of the available information given by the process.</p>
 <p>ETS models allow us to use a process called <strong>maximum likelihood estimation</strong> (the probability of the data arising from a model) to optimize parameters for automatically choosing a model. It is equivalent to minimizing the sum of squared errors.</p>
-<p>The auto-ETS algorithm utilized by all three frameworks selects a model by minimizing the bias-corrected Akaike’s Information Criterion (AICc). The AICc estimates the quality of a model by determining how much information has been lost when applying it to the data: if a model loses <em>less</em> information, then the model is of <em>higher</em> quality. In other words, the lower the value, the better. This process is similar to cross-validation but is much faster, especially on really long time series data.</p>
+<p>The auto-ETS algorithm utilized by all three frameworks selects a model by minimizing the bias-corrected Akaike’s Information Criterion (AICc). The AICc estimates the quality of a model by determining how much information has been lost when applying it to the data: if a model loses <em>less</em> information, then the model is of <em>higher</em> quality. In other words, the lower the AICc value, the better the model. This process is similar to cross-validation but is much faster, especially on really long time series data.</p>
 <div id="fpp2-method-automatic-exponential-smoothing" class="section level3">
 <h3>5.1 fpp2 Method: Automatic Exponential Smoothing</h3>
 <p>The following example will utilize data containing the total yearly visitors to Australia. It has a trend but no seasonality.</p>
@@ -415,7 +411,7 @@ summary(fit)</code></pre>
 <blockquote>
 <p><strong><em>The algorithm chose an ETS(A,A,N) model which is Holt’s linear method with additive errors and additive trend but no seasonal component.</em></strong></p>
 </blockquote>
-<p>Now use a Ljung-Box test to check if the residuals are independent i.e. white noise which would indicate that the model has extracted as much information as it possibly can from the data.</p>
+<p>Now use a <a href="https://robjhyndman.com/hyndsight/ljung-box-test/">Ljung-Box test</a> to check if the residuals are independent i.e. white noise which would indicate that the model has extracted as much information as it possibly can from the data.</p>
 <pre class="r"><code># If p &gt; 0.05, then residuals are white noise 
 checkresiduals(fit)</code></pre>
 <p><img src="staticunnamed-chunk-14-1.png" width="672" /></p>
@@ -450,7 +446,7 @@ h02_tsbl%&gt;%
   autoplot(value) +
   labs(title=&quot;Monthly corticosteroid expenditure in Australia&quot;)</code></pre>
 <p><img src="staticunnamed-chunk-16-1.png" width="672" /></p>
-<pre class="r"><code># Automatically fit an exponential smoothing model to training data
+<pre class="r"><code># Automatically fit an exponential smoothing model
 fit_h02 &lt;- h02_tsbl %&gt;% 
   model(ETS(value))
 
@@ -507,7 +503,7 @@ fit_h02 %&gt;%
 </blockquote>
 </div>
 <div id="modeltime-method-automatic-exponential-smoothing" class="section level3">
-<h3>2.6 modeltime Method: Automatic Exponential Smoothing</h3>
+<h3>5.3 modeltime Method: Automatic Exponential Smoothing</h3>
 <pre class="r"><code># Convert from ts to tibble
 h02_tbl &lt;- fpp2::h02 %&gt;%
   tk_tbl(rename_index = &quot;month&quot;) %&gt;%
@@ -522,7 +518,7 @@ model_fit_ets &lt;- exp_smoothing() %&gt;%
 model_fit_ets</code></pre>
 <pre><code>## parsnip model object
 ## 
-## Fit time:  723ms 
+## Fit time:  693ms 
 ## ETS(M,Ad,M) 
 ## 
 ## Call:
@@ -591,7 +587,7 @@ calibration_tbl %&gt;%
   )</code></pre>
 <p><img src="staticunnamed-chunk-24-1.png" width="672" /></p>
 <blockquote>
-<p>💡 <strong><em>Remember, although the auto-ETS algorithm chose a reasonable model for this seasonal data, there may be a better performing model out there whose residuals more closely resemble white noise i.e. it has extracted more information from the “true” model.</em></strong></p>
+<p>💡 <strong><em>Although the auto-ETS algorithm chose a reasonable model for this seasonal data, there may be a better performing model out there whose residuals more closely resemble white noise. Then again, maybe not.</em></strong></p>
 </blockquote>
 </div>
 </div>
@@ -710,8 +706,9 @@ calibration_tbl %&gt;%
 <h1>7. Conclusions About Exponential Smoothing Models</h1>
 <ul>
 <li>Exponential smoothing models combine Error, Trend, and Season components to fit time series data.</li>
-<li>If the data shows a trend, then you apply an additive component. If the data varies exponentially, then you apply a multiplicative component.</li>
+<li>If the data shows a trend, then you can apply an additive component. If the data varies exponentially, then you apply a multiplicative component.</li>
 <li>Just like with trend, if the data shows seasonal patterns, then you can apply an additive or multiplicative component.</li>
+<li>If the residuals look like white noise, then the model has used up as much information as possible in the data; however, that does not necessarily mean it is the best model out there.</li>
 </ul>
-<p>ETS models ignore random variation in favor of a smoothing process which can sometimes lead to problematic forecasts. They also cannot be applied to data with a cyclic pattern. However, ETS models can be computed quickly and generalize well to a diverse set of time series data. They are especially useful for quickly forecasting on univariate data and should be a tool in every forecaster’s toolbox.</p>
+<p>ETS models ignore random variation in favor of a smoothing process which means their forecasts will lag behind as the trend increases or decreases over time. They also cannot be applied to data with a cyclic pattern. However, ETS models can be computed quickly and generalize well to a diverse set of time series data. They are especially useful for quickly forecasting on univariate data and should be included in every forecaster’s toolbox.</p>
 </div>
