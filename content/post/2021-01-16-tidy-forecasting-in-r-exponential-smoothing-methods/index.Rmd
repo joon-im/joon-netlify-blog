@@ -48,7 +48,7 @@ library(cowplot)      # Arranging plots
 
 ### 1.3 About Exponentially Weighted Models
 
-In a nutshell, an ETS model is a mathematical formula which calculates a forecast by weighing the averages of past observations: the more recent an observation, or lag, the higher the associated weight to the formula. The formula consists of two components with multiple options: 
+In a nutshell, an ETS model is a mathematical formula which calculates a forecast by weighing the averages of past observations: the more recent an observation, or lag, the higher the associated weight to the formula. The formula can also add additional components depending on the patterns in the data. These components are: 
 
 - A **trend** component which is either *missing*, *additive* or *damped*
 - A **seasonal** component which is either *missing*, *additive*, or *multiplicative*
