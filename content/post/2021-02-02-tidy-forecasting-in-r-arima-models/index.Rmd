@@ -1,0 +1,1151 @@
+---
+title: 'Tidy Forecasting in R: ARIMA Models'
+author: Joon Im
+date: '2021-02-02'
+slug: tidy-forecasting-in-r-arima-models
+categories:
+  - Forecasting
+  - R
+  - Time Series
+tags:
+  - fable
+  - forecast
+  - fpp2
+  - fpp3
+  - modeltime
+  - R
+  - tidyverse
+  - time Series
+  - timetk
+---
+
+# 1. Set Up
+
+### 1.1 Introduction
+
+This article is the third in a series comparing the `fpp2`, `fpp3`, and `modeltime`+`timetk` forecasting frameworks in R. It will focus on how to manually and automatically choose an ARIMA model for fitting various types of time series data. It will also show how to evaluate these models to see if the residuals can be considered white noise and how to minimize the AICc. The term ARIMA is short for **A**uto**R**egressive **I**ntegrated **M**oving **A**verage. 
+
+### 1.2 Load Libraries
+
+```{r message=FALSE}
+# Load libraries
+library(fpp2)         # The forecasting OG
+library(fpp3)         # The tidy version of fpp2
+library(modeltime)    # The tidy forecasting newcomer
+library(timetk)       # Companion to modeltime
+library(parsnip)      # Common interface for specifying models
+library(tidyverse)    # Data manipulation tools
+library(rsample)      # Training / Test data splitter
+library(cowplot)      # Arranging plots
+```
+
+### 1.3 ETS vs ARIMA Models
+
+ETS models use multiplicative errors and multiplicative seasonality for handling time series with variance which increases with the level of the series. While ETS models are based on the trend and seasonality, ARIMA models describe the autocorrelations in the data.
+
+> ***ETS and ARIMA are two of the most popular types of models for time series forecasting.***
+
+### 1.4 Stationarity
+
+If a time series is to be considered stationary, then its statistical properties won't be dependent on the time that the series is actually observed. ARIMA models work best if the data shows stationarity before the modeling process begins. 
+
+Here's how to determine the stationarity of a time series: 
+
+- If a series is white noise, then it is stationary.
+- If a series does not increase in variance with the level (i.e. it is stable), then it is stationary.
+- If a series has cyclic behavior without trend or seasonality, then it is stationary even though the length of cycles can vary.
+- If a series has trend and/or seasonality, then it is **not** stationary.
+
+> ***As a general rule, a time series without any long-term patterns is considered stationary.***
+
+### 1.5 Differencing
+
+If a time series is not stationary, then an ARIMA model will not work properly. Therefore, the series must be made stationary by differencing the data. This process involves essentially subtracting observation 1 from observation 2, subtracting observation 2 from 3 and so on until an entirely new series of data is created. 
+
+- If a time series is non-stationary, then make it stationary through differencing
+- If a non-stationary time series is differenced, then the trend and seasonality is eliminated
+- If a time series is stationary, then the ACF will drop to zero quickly
+- If a time series is non-stationary, then the ACF will drop to zero slowly
+
+> ***Differencing can be applied as many times as necessary to achieve stationarity.***
+
+### 1.6 What does ARIMA stand for?
+
+The acronym ARIMA actually describes exactly which components are included in the model. They are as follows:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(kableExtra)
+
+arima_tribble <- tribble(
+  ~Acronym, ~Component, ~Definition,
+  "AR","AutoRegression","AR models use multiple regression with lagged observations as predictors. 
+  They calculate a forecast by regressing on an observation and its lagged (i.e. prior) values.",
+  "I","Integrated","If included, this means that the actual values of the data have been replaced with the differences between each value and its prior value. 
+  This *differencing* is done to make the time series stationary.",
+  "MA","Moving Average","MA models use multiple regression with *lagged errors* as predictors. 
+  They calculate a forecast by regressing on the past forecast errors instead of the actual past values."
+)
+
+# knitr::kable(arima_tribble, align = "ccl", caption = "What does ARIMA stand for")
+
+arima_tribble %>%
+  kbl(caption = "ARIMA Components") %>%
+  # kable_material(c("striped", "hover")) %>%
+  kable_paper(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+```
+
+### 1.7 What are the parameters in ARIMA models?
+
+ARIMA models explicitly specify the above components as parameters. The standard notation of ARIMA(p,d,q) is used where the parameters (p,d,q) are given integer values to identify which kind of model it is. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pdq_tribble <- tribble(
+  ~Parameter, ~Component, ~Definition,
+  "p","AutoRegression","The number of lags to include in the model a.k.a the lag order.",
+  "d","Integrated","The number of times the data has been differenced to make it stationary \na.k.a the degree of differencing.",
+  "q","Moving Average","The number of past errors to include in the model \ni.e. the size of the moving average window \na.k.a the order of moving average."
+)
+
+# knitr::kable(pdq_tribble, align = "ccc")
+
+pdq_tribble %>%
+  kbl(caption = "ARIMA Parameters") %>%
+  kable_paper(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+```
+
+For example, a notation of ARIMA(2,1,2) would indicate that the data has been differenced once (*d*) with 2 past observations (*p*) and 2 past errors (*q*) being included in the model. 
+
+One important thing to consider is that if a time series needs to be differenced *d* times to make it stationary, then the resulting model would be an ARIMA model. However, if a time series does not require any differencing because it is already stationary, then the resulting model would simply be an ARMA model. Essentially, an ARMA(p,q) model is equivalent to an ARIMA(p,0,q) model.
+
+If your time series data has a seasonal pattern, then additional seasonal components (P,D,Q) are added to the model. The seasonal components are similar to the non-seasonal components but they are *backshifts* of the seasonal period. For example, if you wanted to forecast sales for some product in February, you might predict that based on last February's sales. Click [here](https://online.stat.psu.edu/stat510/lesson/4/4.1) to learn more about seasonal ARIMA models. 
+
+---
+
+# 2. Transformations for Variance Stabilization
+
+There are multiple ways to change time series data so that it becomes stationary. Some time series data show increasing variation as the level increases. In these cases, transforming the data to reduce the variance can be helpful. 
+
+- Transformations make fluctuations approximately even across the whole series
+- Simple transformations include square root, cube root, log, and inverse increasing in strength in this order
+- Box-Cox transformations do the same thing but are more complex mathematically 
+
+The following examples will utilize a dataset containing the total monthly generation of electricity in kWh from 1973-2013 in the United States.  
+
+### 2.1 fpp2 Method: Box-Cox Transformation
+
+```{r}
+# Plot original data
+e1 <- autoplot(usmelec)
+
+# Get best lambda value to make seasonal fluctuations about the same 
+lambda <- BoxCox.lambda(usmelec, method = "guerrero")
+
+# Plot Box-Cox transformed data
+e2 <- autoplot(BoxCox(usmelec,lambda))
+
+# Arrange plots
+plot_grid(e1, e2, nrow=2)
+```
+
+> ***Note that the size of the seasonal fluctuations increases as the level increases.***
+
+### 2.2 fpp3 Method: Box-Cox Transformation
+
+```{r}
+# Convert ts to tsibble
+elec_tsbl <- fpp2::usmelec %>%
+  as_tsibble()
+
+# Plot original data
+e1 <- elec_tsbl %>% 
+  autoplot(value) + 
+  labs(title="US monthly net electricity generation")
+
+# Get best lambda value to make seasonal fluctuations about the same 
+lambda <- elec_tsbl %>%
+  features(value, features=guerrero) %>%
+  pull(lambda_guerrero)
+
+# Apply Box-Cox transformation to data using chosen lambda 
+elec_bc <- elec_tsbl %>%
+  mutate(box_cox = box_cox(value, lambda))
+
+# Plot data with Box-Cox transformation applied
+e2 <- elec_bc %>%
+  autoplot(box_cox) + 
+  labs(title="US monthly net electricity generation with Box-Cox transformation")
+
+# Arrange plots
+plot_grid(e1, e2, nrow=2)
+```
+
+> ***Note how the Box-Cox transformation stabilizes the variance as the level increases.***
+
+### 2.3 modeltime Method: Box-Cox Transformation
+
+*Note: The `modeltime` framework can apply transformations during the model creation process as opposed to `fpp2` and `fpp3` where it is a separate process done beforehand. However, in this example the data will be transformed prior to model creation for illustrative purposes.*
+
+```{r message=FALSE}
+# Convert ts to tibble
+elec_tbl <- fpp2::usmelec %>%
+    tk_tbl(rename_index = "month") %>%
+    mutate(month = as_date(month))
+
+# Plot original data
+e1 <- elec_tbl %>% 
+  plot_time_series(
+      .date_var = month,
+      .value    = value,
+      .interactive = FALSE,
+      .smooth_alpha = 0.4,
+      .title = "US monthly net electricity generation"
+  )
+
+# Get best lambda value to make seasonal fluctuations about the same 
+lambda <- elec_tbl %>%
+    as_tsibble() %>%   # Use fabletools as a workaround
+    features(value, features=guerrero) %>%
+    pull(lambda_guerrero)
+
+# Apply Box-Cox transformation to data using chosen lambda 
+elec_bc_tbl <- elec_tbl %>%
+  mutate(box_cox = box_cox(value, lambda))
+
+# Plot data with Box-Cox transformation applied
+e2 <- elec_bc_tbl %>%
+    plot_time_series(
+        .date_var = month,
+        .value = box_cox,
+        .interactive = FALSE,
+        .smooth_alpha = 0.4,
+        .title = "US monthly net electricity generation with Box-Cox transformation"
+    )
+
+# Arrange plots
+plot_grid(e1, e2, nrow=2)
+```
+
+---
+
+# 3. Non-seasonal differencing for stationarity
+
+As noted earlier, ARIMA models require the data to be stationary. If a time series is not stationary, then it's possible to apply a method called differencing to make it so. If this time series is also non-seasonal, then use lag-1 differences to model changes in observations. 
+
+## 3.1  fpp2 Method: Non-seasonal differencing
+
+The following examples will use a `fpp2` dataset containing the annual female murder rate per 100,000 people in the United States from 1950-2004. 
+
+```{r}
+# Plot female murder rate
+m1 <- autoplot(wmurders) + 
+    labs(title="Female murder rate")
+
+# Plot the differenced murder rate
+m2 <- autoplot(diff(wmurders)) + 
+    ggtitle("Female murder rate (differenced)")
+
+# Plot ACF of murder rate
+m3 <- ggAcf(wmurders)
+
+# Plot the ACF of the differenced murder rate
+m4 <- ggAcf(diff(wmurders))
+
+# Arrange plots
+plot_grid(m1, m2, m3, m4, ncol=2)
+```
+
+> ***Does the differenced data look stationary? Does the ACF plot of the differenced data show significant autocorrelation left?***
+
+## 3.2 fpp3 Method: Non-seasonal differencing
+
+```{r warning=FALSE, message=FALSE}
+# Convert ts to tsibble
+wmurders_tsbl <- fpp2::wmurders %>%
+  as_tsibble() %>%
+  mutate(diff_value = difference(value)) # Add differencing column
+
+# Plot female murder rate
+m1 <- wmurders_tsbl %>%
+  autoplot(value) + 
+  labs(title="Female murder rate",
+       x="", y="Per 100,000")
+
+# Plot differenced murder rate
+m2 <- wmurders_tsbl %>%
+  autoplot(diff_value) + 
+  labs(title="Female murder rate (differenced)",
+       x="", y="Difference")
+
+# Plot ACF of murder rate
+m3 <- wmurders_tsbl %>%
+  ACF(value) %>%
+  autoplot() + 
+  labs(title="ACF of murder rate",
+       x="", y="ACF")
+
+# Plot ACF of differenced murder rate
+m4 <- wmurders_tsbl %>%
+  ACF(diff_value) %>%
+  autoplot() + 
+  labs(title="ACF of differenced murder rate",
+       x="", y="ACF")
+
+# Arrange plots
+plot_grid(m1, m2, m3, m4, ncol=2)
+```
+
+## 3.3 modeltime Method: Non-seasonal differencing
+
+*Note: The `modeltime` framework can apply transformations during the model creation process as opposed to `fpp2` and `fpp3` where it is a separate process done beforehand. However, in this example the data will be transformed prior to model creation for illustrative purposes.*
+
+```{r warning=FALSE, message=FALSE, fig.height=8}
+# Convert ts to tibble
+wmurders_tbl <- fpp2::wmurders %>%
+    tk_tbl(rename_index = "year") %>%
+    mutate(
+        year = ymd(year, truncated = 2L),
+        diff_value = difference(value)
+        )
+
+# Plot female murder rate
+m1 <- wmurders_tbl %>%
+    plot_time_series(
+        .date_var = year,
+        .value = value,
+        .interactive = FALSE,
+        .smooth_alpha = 0.4,
+        .title = "Female murder rate"
+    )
+
+# Plot differenced murder rate
+m2 <- wmurders_tbl %>%
+    plot_time_series(
+        .date_var = year,
+        .value = diff_value,
+        .interactive = FALSE,
+        .smooth_alpha = 0.4,
+        .title = "Female murder rate"
+    )
+
+# Plot ACF/PACF of female murder rate
+m3 <- wmurders_tbl %>%
+    plot_acf_diagnostics(
+        .date_var = year,
+        .value = value,
+        .lags = 20,
+        .show_white_noise_bars = TRUE,
+        .interactive = FALSE,
+        .title="Lag diagnostics"
+    )
+
+# Plot ACF of differenced female murder rate
+m4 <- wmurders_tbl %>%
+    plot_acf_diagnostics(
+        .date_var = year,
+        .value = diff_value,
+        .lags = 20,
+        .show_white_noise_bars = TRUE,
+        .interactive = FALSE,
+        .title="Differenced lag diagnostics"
+    )
+
+# Arrange plots
+plot_grid(m1, m2, m3, m4, ncol=2, rel_heights = c(1, 1.5))
+```
+
+> ***The differenced data shows clear stationarity. The ACF & PACF plots of the differenced data shows very little autocorrelation as well.***
+
+---
+
+# 4. Seasonal differencing for stationarity
+
+A seasonal difference is the difference between an observation and the previous observation from the same season.
+
+- First differences are the change between an observation and the next observation.
+- Seasonal differences are the change between one year to the next year.
+
+The following examples will utilize a dataset containing the monthly corticosteroid expenditure in millions of dollars in Australia from 1991-2008. 
+
+```{r, echo=FALSE}
+tsibbledata::PBS %>%
+    filter(ATC2 == "H02") %>%
+    summarise(Cost = sum(Cost) / 1e6) %>%
+    autoplot(.vars=Cost, color=tidyquant::palette_light()[3]) + 
+    tidyquant::theme_tq() + 
+    labs(title = "Monthly corticosteroid expenditure in Australia from 1991 to 2008",
+         x = "Month", y = "Cost in Millions ($AUD)")
+```
+
+> ***This non-stationary time series would benefit from applying a log transformation before differencing.*** 
+
+## 4.1 fpp2 Method: Seasonal Differencing
+
+```{r}
+# Filter & summarize then convert tsibble to ts
+h02_ts <- tsibbledata::PBS %>%
+    filter(ATC2 == "H02") %>%
+    summarise(Cost = sum(Cost) / 1e6) %>%
+    as.ts()
+
+# Plot monthly corticosteroid drug expenditure in millions
+h1 <- autoplot(h02_ts)
+
+# Transform data with log & seasonal differencing
+diff_log_h02_ts <- diff(log(h02_ts), lag = 12)  # Monthly = 12 periods
+
+# Plot logged & seasonally-differenced monthly expenditure
+h2 <- autoplot(diff_log_h02_ts)
+
+# Arrange plots
+plot_grid(h1, h2, nrow=2)
+```
+
+> ***Although the data has been transformed logarithmically and seasonally-differenced once, it is still non-stationary as there is some noticeable trend. Try differencing the data again.***  
+
+```{r}
+# Transform still non-stationary data with another degree of differencing
+dbl_diff_log_h02_ts <- diff(diff_log_h02_ts)
+
+# Plot logged & doubly differenced monthly expenditure
+h3 <- autoplot(dbl_diff_log_h02_ts)
+
+# Plot ACF of doubly-differenced monthly expenditure
+h4 <- ggAcf(dbl_diff_log_h02_ts)
+
+# Arrange plots
+plot_grid(h3, h4, ncol=1)
+```
+
+> ***Although the data is now stationary, there are still some significant autocorrelation spikes. However, this is the expected behavior with seasonal data.***
+
+## 4,2 fpp3 Method: Seasonal Differencing
+
+```{r fig.height=8, fig.width=8}
+# Transform logarithmically, apply seasonal + first differencing, plot it
+h02_tsbl_long <- PBS %>%
+  filter(ATC2 == "H02") %>%
+  summarise(Cost = sum(Cost) / 1e6) %>%
+  transmute(
+      `Sales ($million)` = Cost,
+      `Log sales` = log(Cost),  # Transform using log
+      `Annual change in log sales` = difference(log(Cost), 12), # Calculate seasonal differences
+      `Double differenced log sales` = difference(difference(log(Cost), 12), 1)) %>%  
+  gather("Type", "Sales", !!!syms(measured_vars(.)), factor_key=TRUE) 
+
+# Facet plot by Type
+h02_tsbl_long %>%
+  ggplot(aes(x=Month, y=Sales)) + 
+  geom_line() + 
+  facet_grid(vars(Type), scales="free_y") + 
+  labs(title = "Corticosteroid drug sales", x = "Year", y = "")
+```
+
+## 4.3 modeltime Method: Seasonal Differencing
+
+```{r fig.height=8, fig.width=8}
+# Convert tsibble to tibble
+h02_tbl_long <- h02_tsbl_long %>%
+  tk_tbl(preserve_index = FALSE) %>%
+  mutate(Month = as_date(Month))
+
+# Facet plot by Type
+h02_tbl_long %>%
+  plot_time_series(
+      .date_var = Month,
+      .value = Sales,
+      .facet_vars = Type,
+      .smooth_alpha = 0.6,
+      .interactive = FALSE,
+      .title = "Corticosteroid drug sales")
+```
+
+> ***One handy feature of `modeltime` and `timetk` is the use of a LOESS smoother which helps in determining the stationarity of a series.***
+
+---
+
+# 5. The ARIMA Modeling Process
+
+## 5.1 Manual ARIMA Modeling
+
+The way to choose an ARIMA model manually can be a quite involved process. The following is derived from Professor Hyndman's excellent [book](https://otexts.com/fpp3/arima-r.html) which describes a general procedure for manually choosing an ARIMA model for non-seasonal data.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+manual_arima_tribble <- tribble(
+  ~Step, ~Process,
+  "1.","Plot the data and identify any unusual observations.",
+  "2.","If the variance is unstable, then apply a transformation (log, Box-Cox, etc.) to stabilize it.",
+  "3.","If the data are not stationary, then take first differences until the data are stationary.",
+  "4.","Plot ACF and PACF and identify whether ARIMA(p,d,0) or ARIMA(0,d,q) is more appropriate.",
+  "5.","Manually fit multiple models and find the lowest AICc.",
+  "6.","Plot ACF of the residuals and do a portmanteau test to make sure they look like white noise. If not, go back to step 5.",
+  "7.","Once the residuals look like white noise, calculate forecasts."
+)
+
+# knitr::kable(pdq_tribble, align = "ccc")
+
+manual_arima_tribble %>%
+  kbl(caption = "Manual ARIMA Process") %>%
+  kable_paper(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+```
+
+## 5.2 Automatic ARIMA Modeling
+
+All three forecasting frameworks rely on the Hyndman-Khandakar algorithm to automatically choose an ARIMA model. The algorithm uses a combination of unit root tests, minimization of the AICc score, as well as the minimization of the maximum likelihood estimation to automatically choose the best model. However, it is important to know that it uses approximations and a stepwise approach to speed up the search for a model by default. It's possible to search a much larger set of ARIMA models if you do not use either methods. Here's a general procedure for automatically choosing an ARIMA model for non-seasonal data: 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+auto_arima_tribble <- tribble(
+  ~Step, ~Process,
+  "1.","Plot the data and identify any unusual observations.",
+  "2.","If the variance is unstable, then apply a transformation (log, Box-Cox, etc.) to stabilize it.",
+  "3.","Automatically fit multiple models and find the lowest AICc.",
+  "4.","Plot ACF of the residuals and do a portmanteau test to make sure they look like white noise.",
+  "5.","Once the residuals look like white noise, calculate forecasts."
+)
+
+# knitr::kable(pdq_tribble, align = "ccc")
+
+auto_arima_tribble %>%
+  kbl(caption = "Automatic ARIMA Process") %>%
+  kable_paper(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+```
+
+> ***Although automatically choosing a model can speed things up, manually testing the residuals for white noise is still recommended before calculating forecasts.*** 
+
+---
+
+# 6. Automatic ARIMA Modeling for Non-Seasonal Time Series
+
+The following example will utilize a dataset containing the growth rates of personal consumption and personal income in the United States. 
+
+## 6.1 fpp2 Method: Auto-ARIMA | Non-Seasonal
+
+```{r}
+# 1. Plot the data and identify any unusual observations.
+autoplot(fpp2::austa) + 
+    labs(title = "International visitors to Australia from 1980-2015",
+        x = "Year", y="Millions")
+```
+
+> ***Since there is no seasonal pattern in this series, apply a non-seasonal ARIMA model. Since the variance is stable, there is no need to transform this series and we can skip step 2.*** 
+
+```{r}
+# 3. Automatically fit multiple models and find the lowest AICc.
+fit_austa_ts <- auto.arima(austa, seasonal = FALSE)
+
+# Check the model report
+summary(fit_austa_ts)
+```
+
+```{r}
+# 4. Plot ACF of the residuals and do a portmanteau test to make sure they look like white noise. 
+checkresiduals(fit_austa_ts)
+```
+
+> ***The residuals plot shows a mean around 0, the ACF does not show any significant autocorrelation and the Ljung-Box test shows a p-value greater than 0.05. These factors confirm that the residuals can be considered to be white noise. The distribution is also mostly normal without outliers which means the prediction intervals will be less wide and that is a good thing.*** 
+
+```{r}
+# 5. Once the residuals look like white noise, calculate forecasts.
+autoplot(forecast(fit_austa_ts, h=10)) + 
+    labs(x = "Year", y="Millions")
+```
+
+> ***The automatically chosen ARIMA(0,1,1) with drift accounts for the trend seen in the data and produces reasonable forecasts with good prediction intervals.*** 
+
+## 6.2 fpp3 Method: Auto-ARIMA | Non-Seasonal
+
+The following example will utilize a dataset containing the percentage of GDP for exports in Egypt from 1960-2017. 
+
+```{r}
+# 1. Plot the data and identify any unusual observations.
+egypt_tsbl <- tsibbledata::global_economy %>%
+  filter(Code == "EGY") %>%
+  select(Year, Exports)
+
+egypt_tsbl %>% gg_tsdisplay(Exports, plot_type = "partial")
+```
+
+> ***There is no seasonal pattern in this series and the variance is stable so there is no need for differencing. Since the series also shows cyclic behavior without trend or seasonality, it is considered stationary. When the data are seasonal or cyclic, the ACF plot will show peaks around the seasonal lags or at the average cycle length respectively i.e. ACF plots for seasonal and cyclic data may look similar which can be misleading. Since the data is stationary, we can skip step 2.***
+
+```{r}
+# 3. Automatically fit multiple models and find the lowest AICc.
+fit_egypt_tsbl <- egypt_tsbl %>% model(ARIMA(Exports))
+
+# Check the model report
+report(fit_egypt_tsbl)
+```
+
+```{r}
+# 4. Plot ACF of the residuals and do a portmanteau test to make sure they look like white noise. 
+fit_egypt_tsbl %>% gg_tsresiduals()
+
+# Check if the residuals are white noise with a Ljung-Box test
+fit_egypt_tsbl %>%
+  augment() %>%
+  select(Year, .resid) %>%
+  features(.resid, ljung_box, lag=10)
+```
+
+> ***The residuals plot shows a mean around 0, the ACF does not show any significant autocorrelation and the Ljung-Box test shows a p-value greater than 0.05. These factors confirm that the residuals can be considered to be white noise. The distribution is skewed a bit left which means the prediction intervals will be wider which isn't great but is acceptable.***   
+
+```{r}
+# 5. Once the residuals look like white noise, calculate forecasts.
+fit_egypt_tsbl %>%
+  forecast(h = 10) %>%
+  autoplot(egypt_tsbl) + 
+  labs(
+    title = "Egyptian Exports of Goods and Services 10-year forecasts",
+    subtitle = "ARIMA(2,0,1) w/ mean model",
+    y = "% of GDP")
+```
+
+> ***The automatically chosen ARIMA(2,0,1) w/ mean model accounts for the cyclic nature of the data.*** 
+
+## 6.3 modeltime Method: Auto-ARIMA | Non-Seasonal
+
+The following example will utilize a dataset containing the quarterly percentage changes in economic consumption in the United States from 1970-2019. 
+
+```{r}
+# Convert tsibble to tibble
+us_change_tbl <- fpp3::us_change %>%
+  select(Quarter, Consumption) %>%
+  tk_tbl(preserve_index = FALSE) %>%
+  mutate(Quarter = as_date(Quarter))
+
+# 1. Plot the data and identify any unusual observations.
+us_change_tbl %>%
+  plot_time_series(
+    .date_var = Quarter,
+    .value = Consumption,
+    .smooth_alpha = 0.6,
+    .interactive = FALSE,
+    .title = "Quarterly percent changes in US consumption expenditure"
+  )
+```
+
+> ***This is a quarterly series but there is no obvious seasonal pattern. There is also no trend and the variance does not seem to change much. It does not need differencing as it is already stationary and would be a good candidate for fitting a non-seasonal ARIMA model.*** 
+
+```{r}
+# 3. Automatically fit multiple models and find the lowest AICc.
+
+# Split the data 80/20 
+splits <- rsample::initial_time_split(us_change_tbl, prop = 0.8)
+
+# Model Spec
+model_spec_arima <- arima_reg() %>%
+  set_engine("auto_arima")
+
+# Fit Spec
+model_fit_arima <- model_spec_arima %>%
+  fit(Consumption ~ Quarter, data = rsample::training(splits))
+
+# Check model report
+model_fit_arima
+```
+
+```{r fig.height=6, message=FALSE}
+# 4. Plot ACF of the residuals and do a portmanteau test to make sure they look like white noise. If not white noise, then search a larger set of models to choose from. 
+
+# Create table of model to use
+auto_arima_model_tbl <- modeltime_table(model_fit_arima)
+
+# Calibrate the model to produce confidence intervals
+arima_calibration_tbl <- auto_arima_model_tbl %>%
+  modeltime_calibrate(new_data = rsample::testing(splits))
+
+# Create residuals table
+arima_residuals_tbl <- arima_calibration_tbl %>% modeltime_residuals()
+
+# Plot the residuals
+u1 <- arima_residuals_tbl %>% 
+  plot_modeltime_residuals(
+    .type = "timeplot", 
+    .interactive = FALSE)
+
+u2 <- arima_residuals_tbl %>% 
+  plot_modeltime_residuals(
+    .type = "acf", 
+    .interactive = FALSE,
+    .title = "ACF and PACF Plots")
+
+# Check for white noise with a Ljung-Box test
+arima_residuals_tbl %>%
+  select(.residuals, .index) %>%
+  as_tsibble() %>%  # fabletools workaround
+  features(.residuals, ljung_box, lag=24, dof=0)
+
+# Arrange plots
+plot_grid(u1, u2, ncol=1)
+```
+
+> ***Although the ACF plot shows some autocorrelation remaining in the test set, the residuals pass the Ljung-Box test with a p-value of approximately 0.078 which is higher than the significance threshold of 0.05. It is important to know that not every model will pass all of the tests for white noise and that is okay. However, the automatically chosen ARIMA model here should forecast well. Of interest is that the algorithm chose a seasonal model for this seemingly non-seasonal data.*** 
+
+```{r warning=FALSE, message=FALSE, out.width='100%'}
+# 5. Once the residuals look like white noise, calculate forecasts.
+arima_calibration_tbl %>%
+  modeltime_forecast(
+      new_data = rsample::testing(splits),
+      actual_data = us_change_tbl,
+      h = "5 years"
+  ) %>%
+  plot_modeltime_forecast(
+      .legend_max_width = 25,
+      .interactive = TRUE,
+      .title = "Quarterly changes in US consumption expenditure 5-year forecasts",
+      .x_lab = "Quarter",
+      .y_lab = "Percent Change"
+  ) %>%
+  plotly::layout(  # Custom ggplotly layout
+    legend = list(
+      orientation = "h",   # Show model names horizontally
+      xanchor = "center",  # Use center of legend as anchor
+      x = 0.5, # Legend in center of x-axis
+      y = -0.2) # Place legend below x-axis 
+    )  
+```
+
+> ***The ARIMA(1,0,2)(2,0,2)[4] with non-zero mean model accounts for the somewhat cyclic nature of the series and provides reasonable forecasts with decent confidence intervals.***
+
+---
+
+# 7. Automatic ARIMA Modeling for Seasonal Time Series
+
+The auto-ARIMA process for seasonal data is a bit more complex but mostly similar to the non-seasonal process. 
+
+## 7.1 fpp2 Method: Auto-ARIMA | Seasonal
+
+The following example will utilize a dataset containing the monthly corticosteroid expenditure in millions of dollars in Australia from 1991-2008. It is the same dataset used in section 4 above. 
+
+```{r}
+# 1.Plot the data and identify any unusual observations.
+autoplot(h02_ts) + 
+  labs(title = "Monthly corticosteroid expenditure in Australia from 1991 to 2008",
+         x = "Month", y = "Cost in Millions ($AUD)")
+```
+
+> ***As noted earlier, this series has increasing variance as the level increases and would benefit from a transformation. It will also require seasonal differencing to make it stationary.***
+
+```{r fig.height=6, fig.width=7.5}
+# 1. Plot the data and identify any unusual observations.
+# 2. If the variance is unstable, then apply a transformation to stabilize it.
+
+cbind("H02 sales (scripts in millions)" = h02_ts,
+      "Log H02 sales" = log(h02_ts),
+      "Seasonally differenced" = diff(log(h02_ts), lag = 12)) %>% # Yearly = 12 lags
+  autoplot(facets=TRUE) + 
+  labs(title="Corticosteroid drug sales in Australia",
+    x="Year",y="")
+```
+
+> ***After applying a log transformation and seasonal differencing, the series is now stationary and is ready to automatically fit an ARIMA model.***
+
+```{r}
+# 3. Automatically fit multiple models and find the lowest AICc.
+fit_h02_ts <- auto.arima(h02_ts, lambda = 0)
+
+# Check model report
+summary(fit_h02_ts)
+```
+
+```{r}
+# 4. Plot ACF of the residuals and do a portmanteau test to make sure they look like white noise.
+checkresiduals(fit_h02_ts, lag=36)
+```
+
+> ***There is some autocorrelation shown in the ACF plot and the model fails the Ljung-Box test. The model can still be used for forecasting even though the residuals do not look like white noise (i.e. they are correlated); however, the prediction intervals will probably be inaccurate. Nothing is perfect; it is possible that none of your models will pass all of the residual tests for white noise but that does not mean they can't be used for forecasting.***
+
+```{r}
+# 5. Once the residuals look like white noise, calculate forecasts.
+fit_h02_ts %>%
+  forecast(h = 24) %>% # 2-year forecasts
+  autoplot()
+```
+
+> ***Although the auto-ARIMA algorithm chose a good model which accounts for the seasonality well, it does not always choose the best model. In fact, if analyzed thoroughly, an ARIMA(3,0,1)(0,1,2)[12] model has lower (i.e. better) RMSE and AICc values. For time series that are absolutely crucial, it may be worth the effort to manually choose a model by examining the ACF/PACF instead of relying completely on the auto-ARIMA algorithm.***
+
+## 7.2 fpp3 Method: Auto-ARIMA | Seasonal
+
+The following example will utilize a dataset containing the quarterly European retail trade index from 1996-2011. 
+
+```{r fig.height=7, fig.width=7}
+# 1. Plot the data and identify any unusual observations.
+# 2. If the variance is unstable, then apply a transformation to stabilize it.
+# 3. If the data are not stationary, then take a seasonal difference and/or regular difference until it is so.
+
+# Convert ts to tsibble
+eu_retail_tsbl <- fpp2::euretail %>% as_tsibble()
+
+# Add seasonal + regular differencing, pivot long
+eu_retail_tsbl_plot <- eu_retail_tsbl %>%
+  transmute(
+    `Trade Index` = value,
+    `Annual Change in Index` = difference(value, lag=4),  # Quarterly = 4 lags
+    `Double-Differenced Change in Index` = difference(value, lag=4) %>% difference()
+  ) %>%
+  gather("Type", "Sales", !!!syms(measured_vars(.)), factor_key=TRUE) 
+
+# Facet plot by Type
+eu_retail_tsbl_plot %>%
+  ggplot(aes(x=index, y=Sales)) + 
+  geom_line() + 
+  facet_grid(vars(Type), scales="free_y") + 
+  labs(title = "European retail trade index", x = "Quarter", y = "")
+```
+
+> ***The first plot shows the original trade index series which is non-stationary as it shows a clear upwards then downwards trend. The second plot shows that the first seasonally-differenced annual change in index series is still non-stationary showing an overall downward trend. The third plot shows that the seasonally-differenced and first-differenced change in index series is finally stationary. Let's apply two different automatically chosen ARIMA models.***
+
+```{r}
+# 4a. Automatically fit multiple models and find the lowest AICc with approximation + stepwise approach.
+fit_eu_retail_opt <- eu_retail_tsbl %>% 
+  model(
+    `Auto-ARIMA Optimized` = ARIMA(value ~ index, 
+                                   stepwise = TRUE, 
+                                   approximation = TRUE))
+
+# Check auto-ARIMA report
+report(fit_eu_retail_opt)
+```
+
+> ***Will increasing the number of models to search for lead to a lower AICc score?*** 
+
+```{r}
+# 4b. Automatically fit multiple models and find the lowest AICc w/o approximation + stepwise approach. 
+fit_eu_retail_non_opt <- eu_retail_tsbl %>% 
+  model(
+    `Auto-ARIMA Non-Optimized` = ARIMA(value ~ index, 
+                                       stepwise = FALSE, 
+                                       approximation = FALSE))
+
+# Check auto-ARIMA report
+report(fit_eu_retail_non_opt)
+```
+
+```{r}
+# Combine model metrics, sort by lowest AICc
+auto_arima_metrics <- fit_eu_retail_opt %>%
+  glance() %>%
+  bind_rows(glance(fit_eu_retail_non_opt)) %>%
+  arrange(AICc)
+
+# Show metrics summary
+auto_arima_metrics
+```
+
+> ***The `glance()` function is useful for summarizing a model's fit in a neat `tibble` format. Setting the `stepwise` and `approximation` parameters to `FALSE` means the algorithm will test a much larger variety of ARIMA models. For this particular time series, doing this leads to a slightly lower AICc score. However, this process is computationally expensive and does not guarantee a better fitting model. In fact, an ARIMA(0,1,3)(0,1,1)[4] model which was manually chosen after examining the ACF & PACF shows an even lower AICc. Let's see why this manually chosen model is a better fit and then apply it.***
+
+```{r warning=FALSE}
+# Plot the double-differenced seasonal data with ACF & PACF
+eu_retail_tsbl %>%
+  gg_tsdisplay(
+    value %>% difference(4) %>% difference(), 
+    plot_type = "partial"
+    ) +
+  ggtitle("Double-differenced Euro trade index")
+```
+
+> ***The significant spike at lag 1 in the ACF plot suggests a non-seasonal MA(1) component. Additionally, the significant spike at lag 4 in the ACF plot suggests a seasonal MA(1) component. Therefore an ARIMA(0,1,1)(0,1,1)[4] model (first and seasonal difference + non-seasonal and seasonal MA(1) components) would be a good place to start for testing models manually.***
+
+```{r}
+# Manually fit an ARIMA(0,1,1)(0,1,1)[4] model
+fit_eu_retail_011_011 <- eu_retail_tsbl %>%
+  model(ARIMA(value ~ pdq(0,1,1) + PDQ(0,1,1)))
+
+# Check residuals
+fit_eu_retail_011_011 %>% 
+  gg_tsresiduals() + 
+  ggtitle("Residuals from fitted ARIMA(0,1,1)(0,1,1) model")
+```
+
+> ***The ACF plot shows a significant spike at lag 2 and a fairly significant spike at lag 3. This suggests that more non-seasonal terms would result in a better model. At this point, adding an additional non-seasonal term step-by-step in a sequential fashion and then minimizing the AICc score would be a good plan of action. In this case, since we already know that an ARIMA(0,1,3)(0,1,1)[4] results in the lowest AICc, we'll skip over analyzing an ARIMA(0,1,2)(0,1,1)[4] model for now.***
+
+```{r}
+# Manually fit an ARIMA(0,1,3)(0,1,1)[4] model
+fit_eu_retail_013_011 <- eu_retail_tsbl %>%
+  model(
+    `ARIMA(0,1,3)(0,1,1)[4]` = ARIMA(value ~ pdq(0,1,3) + PDQ(0,1,1)))
+
+# 5. Plot ACF of the residuals and do a portmanteau test to make sure they look like white noise.
+fit_eu_retail_013_011 %>% 
+  gg_tsresiduals() + 
+  ggtitle("Residuals from fitted ARIMA(0,1,3)(0,1,1)[4] model")
+```
+
+> ***The residuals for an ARIMA(0,1,3)(0,1,1)[4] model shows all spikes within the significance limits in the ACF plot. This suggests that they are white noise. Now run a Ljung-Box test to make sure.***
+
+```{r}
+# Ljung-Box white noise test (p-value > 0.05)
+fit_eu_retail_013_011 %>% 
+  augment() %>%
+  select(.resid, index) %>%
+  features(.resid, ljung_box, lag=20, dof=0) # Or use box_pierce instead
+```
+
+> ***The residuals for an ARIMA(0,1,3)(0,1,1)[4] model passes the Ljung-Box test as it confirms that they have no remaining autocorrelation with a p-value > 0.05. We can confidently say that the residuals are white noise. Now check the model report for the AICc.***
+
+```{r}
+# Check manual ARIMA report for AICc
+fit_eu_retail_013_011 %>% report()
+```
+
+> ***Let's combine and compare the summary metrics for this manually chosen model to the two automatically chosen models just for fun.*** 
+
+```{r}
+# Combine auto-ARIMA + manual ARIMA metrics into tibble
+auto_arima_metrics %>%
+  bind_rows(fit_eu_retail_013_011 %>% glance()) %>%
+  arrange(AICc)
+```
+
+> ***The AICc of the manually chosen ARIMA model is lower than the automatically chosen models. Now it's finally time to plot some forecasts using the best model.***
+
+```{r fig.width=8}
+# Plot 3-year forecasts 
+fit_eu_retail_013_011 %>%
+  forecast(h = 12) %>% # 3 years = 12 quarters 
+  autoplot(eu_retail_tsbl) +
+  labs(
+    title="European retail trade index 3-year forecast",
+    subtitle="ARIMA(0,1,3)(0,1,1)[4] model",
+       x="Quarter", y="Trade Index")
+```
+
+> ***By double-differencing the data, the 3-year forecasts follows the recent downwards trend. The large prediction intervals allow for the data to trend upwards even though the point forecast trends downwards. The main point of all this is to illustrate that relying on an algorithm to automatically select an ARIMA model will not always give the best fitting model. As the saying goes: if you want a job well done, sometimes you gotta do it yourself.***
+
+## 7.3 modeltime Method: Auto-ARIMA | Seasonal
+
+The following example will utilize a dataset containing the total US monthly job numbers in various industries but will focus on the leisure and hospitality industry from 2000-2019. 
+
+```{r}
+# 1. Plot the data and identify any unusual observations.
+
+# Filter the data, convert tsibble to tibble
+leisure_tbl <- us_employment %>%
+  filter(
+    Title == "Leisure and Hospitality", 
+    year(Month) > 2000
+    ) %>%
+  mutate(
+    Employed = Employed / 1000,  # In millions
+    Month = as_date(Month)
+    ) %>%  
+  select(Month, Employed) %>%
+  tk_tbl(preserve_index = FALSE)
+
+leisure_tbl %>%
+  plot_time_series(
+    .date_var = Month,
+    .value = Employed,
+    .interactive = FALSE,
+    .title = "Monthly employment in the US leisure & hospitality industry",
+    .x_lab = "Month",
+    .y_lab = "Jobs (In Millions)"
+  ) + 
+  labs(subtitle = "1/2000 - 6/2019")
+```
+
+> ***This time series is non-stationary with a clear seasonal pattern and non-linear trend. Since the variance is not increasing with the level, a transformation is not necessary so skip step 2. Let's apply a seasonal difference and see what happens to the stationarity.***
+
+```{r warning=FALSE}
+# 3. If the data are not stationary, then take a seasonal difference and/or a first difference until it is so.
+
+# Add a column of seasonally differenced data
+leisure_sd_tbl <- leisure_tbl %>%
+  tk_augment_differences( 
+    .value = Employed,
+    .lags = 12,
+    .differences = 1
+  ) 
+
+# Plot seasonally-differenced data
+leisure_sd_tbl %>%
+  plot_time_series(
+    .date_var = Month,
+    .value = Employed_lag12_diff1, # Seasonally differenced data
+    .interactive = FALSE,
+    .title = "Monthly employment in the US leisure & hospitality industry",
+    .x_lab = "Month",
+    .y_lab = "Seasonally Differenced"
+  ) + 
+  labs(subtitle = "1/2000 - 6/2019")
+```
+
+> ***After applying a seasonal difference, the series is still not stationary. Let's apply a first difference to this seasonally differenced data to make it stationary.***  
+
+```{r}
+# Apply a first difference 
+leisure_sd_diff_tbl <- leisure_sd_tbl %>%
+  tk_augment_differences(
+    .value = Employed_lag12_diff1,
+    .lags = 1, 
+    .differences = 1
+  )
+
+# Check that differencing was applied
+leisure_sd_diff_tbl %>% tail()
+```
+
+> ***Make sure to apply the first difference to the already seasonally-differenced data. Now check if the series is stationary and if so, plot the lag diagnostics.***
+
+```{r warning=FALSE, fig.width=7.5, fig.height=7}
+# Plot seasonally + first differenced data 
+lh1 <- leisure_sd_diff_tbl %>%
+  plot_time_series(
+    .date_var = Month,
+    .value = Employed_lag12_diff1_lag1_diff1, # Seasonal + first differenced data
+    .interactive = FALSE,
+    .title = "Monthly employment in the US leisure & hospitality industry from 2000-2019",
+    .x_lab = "Month",
+    .y_lab = "Seasonally + First Differenced"
+  )
+
+# Plot lag diagnostics of seasonally + first differenced data
+lh2 <- leisure_sd_diff_tbl %>%
+  plot_acf_diagnostics(
+    .date_var = Month,
+    .value = Employed_lag12_diff1_lag1_diff1,
+    .lags = 36, 
+    .interactive = FALSE,
+    .show_white_noise_bars = TRUE
+  )
+
+# Arrange plots
+plot_grid(lh1, lh2, ncol = 1, rel_heights = c(1, 2))
+```
+
+> ***The series finally looks stationary after applying a seasonal difference and a first difference. There are significant spikes at lag 2 and lag 12 in the ACF plot which suggest a non-seasonal MA(2) component and seasonal MA(1) component respectively. A breakdown of all the components is as follows: first difference (d=1), seasonal difference (D=1), non-seasonal MA(2) (q=2), and seasonal MA(1) component (Q=1). We can summarize this as an ARIMA(0,1,2)(0,1,1)[12] model. It's also possible to manually select an ARIMA by using the PACF to choose the non-seasonal aspect and the ACF to select the seasonal aspect of the model which would suggest an ARIMA(2,1,0)(0,1,1)[12] model. Let's apply these two manually chosen models and an automatically chosen model and see what happens.***
+
+```{r}
+# 3. Automatically fit multiple models and find the lowest AICc.
+
+# Split the data 80/20 into a training and test set
+splits <- rsample::initial_time_split(leisure_tbl, prop = 0.8)
+
+# Manually fit an ARIMA(0,1,2)(0,1,1)[12] model
+model_fit_arima_012_011 <- arima_reg(
+  non_seasonal_ar          = 0,  # p
+  non_seasonal_differences = 1,  # d
+  non_seasonal_ma          = 2,  # q
+  seasonal_ar              = 0,  # P
+  seasonal_differences     = 1,  # D
+  seasonal_ma              = 1,  # Q
+  seasonal_period          = 12  # Monthly data
+  ) %>%
+  set_engine("arima") %>%
+  fit(Employed ~ Month, data = training(splits))
+
+# Manually fit an ARIMA(2,1,0)(0,1,1)[12] model
+model_fit_arima_210_011 <- arima_reg(
+  non_seasonal_ar          = 2,  # p
+  non_seasonal_differences = 1,  # d
+  non_seasonal_ma          = 0,  # q
+  seasonal_ar              = 0,  # P
+  seasonal_differences     = 1,  # D
+  seasonal_ma              = 1,  # Q
+  seasonal_period          = 12  # Monthly data
+  ) %>%
+  set_engine("arima")%>%
+  fit(Employed ~ Month, data = training(splits))
+
+# Automatically fit an ARIMA model
+model_fit_auto_arima <- arima_reg() %>%
+  set_engine("auto_arima")%>%
+  fit(Employed ~ Month, data = training(splits))
+
+# Add fitted models to a modeltime table 
+arima_models_tbl <- modeltime_table(
+  model_fit_arima_012_011,
+  model_fit_arima_210_011,
+  model_fit_auto_arima)
+
+# Check modeltime table
+arima_models_tbl
+```
+
+> ***Now that all the models have been fitted, best practices tell us to test each model's residuals for white noise. However, since that process has already been shown in a previous example, we will skip step 4 here. The next step is to calibrate the fitted models on the test set to create confidence intervals and accuracy metrics. Note that calibration data are forecasting predictions and residuals calculated from out-of-sample data.***
+
+```{r warning=FALSE, message=FALSE, out.width='100%'}
+# Calibrate the model to produce confidence intervals
+arima_models_calibration_tbl <- arima_models_tbl %>%
+  modeltime_calibrate(new_data = rsample::testing(splits))
+
+# Visualize the forecasts on the test set
+arima_models_calibration_tbl %>%
+  modeltime_forecast(
+    new_data = testing(splits),
+    actual_data =  leisure_tbl
+  ) %>%
+  plot_modeltime_forecast(
+    .legend_max_width = 25,
+    .interactive = TRUE,
+    .title = "Visualizing ARIMA model forecasts on test set",
+    .x_lab = "Month",
+    .y_lab = "Jobs (In Millions)"
+  ) %>% 
+  plotly::layout(  # Custom ggplotly layout 
+    legend = list(
+      orientation = "h",   
+      xanchor = "center",  
+      x = 0.5, 
+      y = -0.2) 
+    )  
+```
+
+> ***Of interest is that all three models do well at capturing the seasonal pattern and the increasing trend extends the recent pattern as well. Instead of relying on the AICc, `modeltime` evaluates accuracy on the test (i.e. out-of-sample) set. Now decide which model fits the best based on various accuracy metrics.***
+
+```{r}
+# Check accuracy metrics
+arima_models_calibration_tbl %>%
+  modeltime_accuracy() %>%
+  table_modeltime_accuracy(  # Fancy table
+    .interactive = FALSE
+  )
+```
+
+> ***The clear winner is model 3 which is the automatically chosen ARIMA model. It has better error metrics (lower is better) and even has a very slightly higher R-squared value (higher is better). Now refit the models to the full dataset and make future forecasts.*** 
+
+```{r warning=FALSE, message=FALSE, out.width='100%'}
+# Refit models to full dataset and forecast forward
+arima_models_refit_tbl <- arima_models_calibration_tbl %>%
+  # filter(.model_id == 3) %>%  # Only show best model
+  modeltime_refit(data = leisure_tbl)
+
+# Plot 3-year forecasts
+arima_models_refit_tbl %>%
+  modeltime_forecast(
+    h = "3 years", 
+    actual_data = leisure_tbl
+  ) %>%
+  plot_modeltime_forecast(
+    .legend_max_width = 25, 
+    .interactive = TRUE,
+    .title = "Monthly employment in the US leisure & hospitality industry w/ 3-year forecasts",
+    .x_lab = "Month",
+    .y_lab = "Jobs (In Millions)"
+  ) %>%
+  plotly::layout(
+    title = list(
+      text = paste0("Monthly employment in the US leisure & hospitality industry",
+                    "<br>",
+                    "<sup>",
+                    "3-year forecasts starting from October 2019",
+                    "</sup>")),
+    legend = list(
+      orientation = "h",   
+      xanchor = "center",  
+      x = 0.5, 
+      y = -0.2))         
+```
+
+> ***"Complex inventions can make your life simple." - The Grouch, Lyrics to ["No More Greener Grasses."](https://www.youtube.com/watch?v=SJqCa8SlCk0)***
+
+# 8. Conclusions about ARIMA models
+
+ARIMA and ETS models are some of the most widely used forecasting techniques. They are complementary to each other: ARIMA models focus on the autocorrelations in the data whereas ETS models focus on the trend and seasonality. Every forecaster should consider trying ETS and ARIMA models before jumping to more complex methods like machine-learning and neural networks. 
+
+Here are some of my thoughts about ARIMA models and the three forecasting frameworks utilized in this article:
+
+- Visualizing and identifying different patterns in your time series data is always the first step in forecasting.
+- The [Hyndman-Khandakar algorithm](https://otexts.com/fpp3/arima-r.html) for automatic ARIMA modeling does not always choose a model with the best AICc score.
+- Just because the residuals of a model do not pass every test for white noise does not mean the model is unsuitable for forecasting; it is certainly possible that the best-performing model will fail a test or two.
+- `fpp2` is considered to be outdated and is no longer maintained; `fpp3` and `modeltime`+`timetk` are currently maintained.
+- The `fpp2` and `fpp3` frameworks focus more on minimizing the AICc for ARIMA model selection whereas `modeltime`+`timetk` focuses more on accuracy measures on a test set.
+- All three frameworks `fpp2`, `fpp3`, and `modeltime`+`timetk` rely on the `forecast` package and thus will give similar results; however, they all have different methodologies with their own respective strengths and weaknesses.
