@@ -23,7 +23,7 @@ tags:
 
 ### 1.1 Introduction
 
-This article is the third in a series comparing the `fpp2`, `fpp3`, and `modeltime`+`timetk` forecasting frameworks in R. It will focus on how to manually and automatically choose an ARIMA model for fitting various types of time series data. It will also show how to evaluate these models to see if the residuals can be considered white noise and how to minimize the AICc. The term ARIMA is short for **A**uto**R**egressive **I**ntegrated **M**oving **A**verage. 
+This article is the third in a series comparing the `fpp2`, `fpp3`, and `modeltime`+`timetk` forecasting frameworks in R. It will focus on how to manually and automatically choose an ARIMA model for fitting various types of time series data. It will also show how to evaluate these models to see if the [residuals](https://otexts.com/fpp3/residuals.html) can be considered white noise and how to minimize the [AICc](https://en.wikipedia.org/wiki/Akaike_information_criterion) for model selection. The term ARIMA is short for **A**uto**R**egressive **I**ntegrated **M**oving **A**verage. 
 
 ### 1.2 Load Libraries
 
@@ -41,7 +41,7 @@ library(cowplot)      # Arranging plots
 
 ### 1.3 ETS vs ARIMA Models
 
-ETS models use multiplicative errors and multiplicative seasonality for handling time series with variance which increases with the level of the series. While ETS models are based on the trend and seasonality, ARIMA models describe the autocorrelations in the data.
+[ETS models](https://www.joonim.net/2021/01/16/tidy-forecasting-in-r-exponential-smoothing-methods/) weigh the averages of past observations and explicitly model based upon how the trend and/or seasonality in the data change over time. ARIMA models describe the autocorrelations in the data and use lagged (past) observations to forecast new observations by applying a varying weights to past observations. 
 
 > ***ETS and ARIMA are two of the most popular types of models for time series forecasting.***
 
@@ -55,6 +55,7 @@ Here's how to determine the stationarity of a time series:
 - If a series does not increase in variance with the level (i.e. it is stable), then it is stationary.
 - If a series has cyclic behavior without trend or seasonality, then it is stationary even though the length of cycles can vary.
 - If a series has trend and/or seasonality, then it is **not** stationary.
+- If the stationarity of a series is unclear, then use a [unit root test](https://otexts.com/fpp3/stationarity.html) to be sure.
 
 > ***As a general rule, a time series without any long-term patterns is considered stationary.***
 
@@ -123,13 +124,13 @@ If your time series data has a seasonal pattern, then additional seasonal compon
 
 # 2. Transformations for Variance Stabilization
 
-There are multiple ways to change time series data so that it becomes stationary. Some time series data show increasing variation as the level increases. In these cases, transforming the data to reduce the variance can be helpful. 
+There are multiple ways to change time series data so that it becomes stationary. Some data show increasing variation as the level increases or just have unstable variance overall. In these cases, transforming the data to reduce the variance can be helpful. 
 
 - Transformations make fluctuations approximately even across the whole series
 - Simple transformations include square root, cube root, log, and inverse increasing in strength in this order
 - Box-Cox transformations do the same thing but are more complex mathematically 
 
-The following examples will utilize a dataset containing the total monthly generation of electricity in kWh from 1973-2013 in the United States.  
+The following examples will utilize a dataset containing the total monthly generation of electricity in kWh from 1973-2013 in the United States to show how to apply a transformation. 
 
 ### 2.1 fpp2 Method: Box-Cox Transformation
 
@@ -147,7 +148,7 @@ e2 <- autoplot(BoxCox(usmelec,lambda))
 plot_grid(e1, e2, nrow=2)
 ```
 
-> ***Note that the size of the seasonal fluctuations increases as the level increases.***
+> ***Note that the size of the seasonal fluctuations increases as the level increases in the original time series plot.***
 
 ### 2.2 fpp3 Method: Box-Cox Transformation
 
@@ -179,7 +180,7 @@ e2 <- elec_bc %>%
 plot_grid(e1, e2, nrow=2)
 ```
 
-> ***Note how the Box-Cox transformation stabilizes the variance as the level increases.***
+> ***Note how the Box-Cox transformation stabilizes the variance as the level increases in the transformed plot.***
 
 ### 2.3 modeltime Method: Box-Cox Transformation
 
