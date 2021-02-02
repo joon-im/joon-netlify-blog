@@ -419,7 +419,7 @@ plot_grid(h3, h4, ncol=1)
 
 > ***Although the data is now stationary, there are still some significant autocorrelation spikes. However, this is the expected behavior with seasonal data.***
 
-## 4,2 fpp3 Method: Seasonal Differencing
+## 4.2 fpp3 Method: Seasonal Differencing
 
 ```{r fig.height=8, fig.width=8}
 # Transform logarithmically, apply seasonal + first differencing, plot it
@@ -460,7 +460,7 @@ h02_tbl_long %>%
       .title = "Corticosteroid drug sales")
 ```
 
-> ***One handy feature of `modeltime` and `timetk` is the use of a LOESS smoother which helps in determining the stationarity of a series.***
+> ***One handy feature of `modeltime` and `timetk` is the use of a LOESS smoother which can help in determining the stationarity of a series.***
 
 ---
 
@@ -491,7 +491,7 @@ manual_arima_tribble %>%
 
 ## 5.2 Automatic ARIMA Modeling
 
-All three forecasting frameworks rely on the Hyndman-Khandakar algorithm to automatically choose an ARIMA model. The algorithm uses a combination of unit root tests, minimization of the AICc score, as well as the minimization of the maximum likelihood estimation to automatically choose the best model. However, it is important to know that it uses approximations and a stepwise approach to speed up the search for a model by default. It's possible to search a much larger set of ARIMA models if you do not use either methods. Here's a general procedure for automatically choosing an ARIMA model for non-seasonal data: 
+All three forecasting frameworks rely on the Hyndman-Khandakar algorithm to automatically choose an ARIMA model. The algorithm uses a combination of unit root tests, minimization of the AICc score, as well as the minimization of the maximum likelihood estimation to automatically choose the best model. However, it is important to know that it uses approximations and a stepwise approach to speed up the search for a model by default. It's possible to search a much larger set of ARIMA models if you do not use either methods but it will take longer. Here's a general procedure for automatically choosing an ARIMA model for non-seasonal data: 
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 auto_arima_tribble <- tribble(
