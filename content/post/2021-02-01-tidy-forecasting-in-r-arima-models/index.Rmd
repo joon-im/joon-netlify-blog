@@ -482,9 +482,9 @@ A first difference is the change between an observation and the next observation
 
 If a time series is non-seasonal but is also non-stationary, then you would apply first differencing as many times as necessary to make it stationary. 
 
-If a time series is seasonal and thus by definition non-stationary, then apply a seasonal difference to try and make it stationary. If this seasonally differenced series is still non-stationary, then apply apply first differencing until it is stationary. 
+If a time series is seasonal and thus by definition non-stationary, then apply a seasonal difference to try and make it stationary. If this seasonally differenced series is still non-stationary, then apply first differencing until it is stationary. 
 
-The following examples will utilize a dataset containing the monthly corticosteroid expenditure in millions of dollars in Australia from 1991-2008. 
+The following examples will utilize a dataset containing the monthly corticosteroid expenditure in millions of dollars in Australia from 1991-2008 to illustrate the seasonal differencing process. 
 
 ```{r, echo=FALSE}
 tsibbledata::PBS %>%
@@ -496,7 +496,7 @@ tsibbledata::PBS %>%
          x = "Month", y = "Cost in Millions ($AUD)")
 ```
 
-> ***This non-stationary time series would benefit from applying a log transformation before differencing.*** 
+> ***This non-stationary time series would benefit from applying a transformation before differencing. Since the variance is not greatly increasing with the level, it probably does not require a Box-Cox transformation. Instead, let's try a log transformation.*** 
 
 ## 4.1 fpp2 Method: Seasonal Differencing
 
