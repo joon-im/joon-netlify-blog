@@ -166,7 +166,7 @@ plot_grid(plot, diff, acf, acf_diff)
 
 ```
 
-> ***Notice how the ACF plot of the differenced stock price data has only one autocorrelation spike as opposed to the ACF plot of the original data which shows significant autocorrelation. The differenced Google stock price data is stationary and looks just like random white noise i.e. the daily change is not correlated with past days. Differencing can be applied as many times as necessary to achieve stationarity.***
+> ***Notice how the ACF plot of the differenced stock price data has only one autocorrelation spike as opposed to the ACF plot of the original data which shows significant autocorrelation. This indicates that the differenced Google stock price data is stationary and looks just like random white noise i.e. the daily change is not correlated with past days. Differencing can be applied as many times as necessary to achieve stationarity.***
 
 ### 1.6 What does ARIMA stand for?
 
@@ -443,7 +443,7 @@ m2 <- wmurders_tbl %>%
         .value = diff_value,
         .interactive = FALSE,
         .smooth_alpha = 0.4,
-        .title = "Female murder rate"
+        .title = "Differenced female murder rate"
     )
 
 # Plot ACF/PACF of female murder rate
