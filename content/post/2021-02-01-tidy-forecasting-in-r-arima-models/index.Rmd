@@ -23,7 +23,7 @@ tags:
 
 ### 1.1 Introduction
 
-This article is the third in a series comparing the `fpp2`, `fpp3`, and `modeltime`+`timetk` forecasting frameworks in R. It will focus on how to manually and automatically choose an ARIMA model for fitting various types of time series data. It will also show how to evaluate these models to see if the [residuals](https://otexts.com/fpp3/residuals.html) can be considered white noise and how to minimize the [AICc](https://en.wikipedia.org/wiki/Akaike_information_criterion) for model selection. The term ARIMA is short for **A**uto**R**egressive **I**ntegrated **M**oving **A**verage. 
+This article is the third in a series comparing the `fpp2`, `fpp3`, and `modeltime`+`timetk` forecasting frameworks in R. It will focus on how to manually and automatically choose an ARIMA model for fitting various types of time series data. It will also show how to evaluate the [residuals](https://otexts.com/fpp3/residuals.html) of a fitted model for white noise and how to minimize the [AICc](https://en.wikipedia.org/wiki/Akaike_information_criterion) for model selection. The term ARIMA is short for **A**uto**R**egressive **I**ntegrated **M**oving **A**verage. 
 
 ### 1.2 Load Libraries
 
@@ -41,7 +41,7 @@ library(cowplot)      # Arranging plots
 
 ### 1.3 ETS vs ARIMA Models
 
-[ETS models](https://www.joonim.net/2021/01/16/tidy-forecasting-in-r-exponential-smoothing-methods/) weigh the averages of past observations and explicitly model based upon how the trend and/or seasonality in the data change over time. ARIMA models describe the autocorrelations in the data and use lagged (past) observations to forecast new observations by applying a varying weights to past observations. 
+[ETS models](https://www.joonim.net/2021/01/16/tidy-forecasting-in-r-exponential-smoothing-methods/) weigh the averages of past observations and explicitly model based upon how the trend and/or seasonality in the data change over time. ARIMA models take a different approach and attempts to describe the autocorrelations in the data while using lagged (past) observations to forecast new observations and applying a varying weights to these lagged observations. 
 
 > ***ETS and ARIMA are two of the most popular types of models for time series forecasting.***
 
@@ -57,18 +57,116 @@ Here's how to determine the stationarity of a time series:
 - If a series has trend and/or seasonality, then it is **not** stationary.
 - If the stationarity of a series is unclear, then use a [unit root test](https://otexts.com/fpp3/stationarity.html) to be sure.
 
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=9, fig.width=7.5}
+library(tidyquant)
+
+trend <- fpp2::austa %>%
+  autoplot(color=palette_light()[1]) + 
+  theme_tq() + 
+  labs(
+    title = "International visitors to Australia from 1980 to 2015",
+    subtitle = "Trend: Yes | Seasonality: No | Increasing Variance: No | Stationarity: No",
+        x = "Year", y="Visitors (In Millions)")
+
+seasonality <- tsibbledata::aus_production %>%
+  select(Quarter, Beer) %>%
+  mutate(Quarter = as_date(Quarter)) %>%
+  filter(Quarter >= "1975-01-01" & Quarter <= "1990-01-01") %>%
+  autoplot(Beer, color=palette_light()[2]) + 
+  theme_tq() + 
+  labs(
+    title = "Quarterly production of beer in Australia from Q1 1975 to Q1 1990",
+    subtitle = "Trend: None | Seasonality: Yes | Increasing Variance: No | Stationarity: No",
+    x = "Quarter", y = "Production (In Megalitres)"
+  )
+
+variance <- fpp2::usmelec %>%
+  autoplot(color=palette_light()[3]) + 
+  theme_tq() + 
+  labs(
+    title = "Monthly US electricity generation from January 1973 to June 2013",
+    subtitle = "Trend: Yes | Seasonality: Yes | Increasing Variance: Yes | Stationarity: No",
+        x = "Month", y="kWh (In Billions)")
+
+stationary <- tsibbledata::gafa_stock %>%
+  filter(Symbol == "GOOG") %>%
+  select(Date, Close) %>%
+  filter(Date >= "2015-01-01" & Date <= "2015-08-15") %>%
+  autoplot(difference(Close), color=palette_light()[6]) + 
+  tidyquant::theme_tq() + 
+  labs(
+    title = "Daily change in Google stock price from January 2015 to August 2015",
+    subtitle = "Trend: No | Seasonality: No | Increasing Variance: No | Stationarity: Yes",
+    x = "Day", y = "Change"
+  )
+
+plot_grid(trend, seasonality, variance, stationary, ncol=1)
+```
+
 > ***As a general rule, a time series without any long-term patterns is considered stationary.***
 
 ### 1.5 Differencing
 
 If a time series is not stationary, then an ARIMA model will not work properly. Therefore, the series must be made stationary by differencing the data. This process involves essentially subtracting observation 1 from observation 2, subtracting observation 2 from 3 and so on until an entirely new series of data is created. 
 
-- If a time series is non-stationary, then make it stationary through differencing
-- If a non-stationary time series is differenced, then the trend and seasonality is eliminated
-- If a time series is stationary, then the ACF will drop to zero quickly
-- If a time series is non-stationary, then the ACF will drop to zero slowly
+- If a time series is non-stationary, then make it stationary through differencing.
+- If a non-stationary time series is differenced, then the trend and seasonality is eliminated.
+- If a time series is stationary, then the autocorrelation of the lags will drop to zero quickly.
+- If a time series is non-stationary, then the autocorrelation of the lags will drop to zero slowly.
 
-> ***Differencing can be applied as many times as necessary to achieve stationarity.***
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=6, fig.width=7.5}
+
+goog <- tsibbledata::gafa_stock %>%
+  filter(Symbol == "GOOG") %>%
+  select(Date, Close) %>%
+  filter(Date >= "2015-01-01" & Date <= "2015-08-15") %>% 
+  fill_gaps() %>%
+  fill(Close, .direction = "down")
+
+plot <- tsibbledata::gafa_stock %>%
+  filter(Symbol == "GOOG") %>%
+  select(Date, Close) %>%
+  filter(Date >= "2015-01-01" & Date <= "2015-08-15") %>%
+  autoplot() + 
+  theme_tq() +
+  labs(title = "Google stock price",
+       subtitle = "Series is non-stationary",
+       x = "Day", y="Stock Price")
+
+acf <- goog %>%
+  ACF() %>%
+  autoplot() + 
+  theme_tq() + 
+  labs(title = "ACF Plot",
+       subtitle = "Significant correlation = Not white noise",
+       x="Lag",y="Correlation")
+
+diff <- tsibbledata::gafa_stock %>%
+  filter(Symbol == "GOOG") %>%
+  select(Date, Close) %>%
+  filter(Date >= "2015-01-01" & Date <= "2015-08-15") %>%
+  autoplot(difference(Close)) + 
+  theme_tq() + 
+  labs(
+    title = "Differenced Google stock price",
+    subtitle = "Series is stationary",
+    x = "Day", y = "Change"
+  )
+
+
+acf_diff <- goog %>% 
+  ACF(difference(Close)) %>%
+  autoplot() + 
+  theme_tq() + 
+  labs(title = "Differenced ACF Plot",
+       subtitle = "Lack of correlation = White noise",
+       x="Lag",y="Correlation")
+
+plot_grid(plot, diff, acf, acf_diff)
+
+```
+
+> ***Notice how the ACF plot of the differenced stock price data has only one autocorrelation spike as opposed to the ACF plot of the original data which shows significant autocorrelation. The differenced Google stock price data is stationary and looks just like random white noise i.e. the daily change is not correlated with past days. Differencing can be applied as many times as necessary to achieve stationarity.***
 
 ### 1.6 What does ARIMA stand for?
 
@@ -118,7 +216,25 @@ For example, a notation of ARIMA(2,1,2) would indicate that the data has been di
 
 One important thing to consider is that if a time series needs to be differenced *d* times to make it stationary, then the resulting model would be an ARIMA model. However, if a time series does not require any differencing because it is already stationary, then the resulting model would simply be an ARMA model. Essentially, an ARMA(p,q) model is equivalent to an ARIMA(p,0,q) model.
 
-If your time series data has a seasonal pattern, then additional seasonal components (P,D,Q) are added to the model. The seasonal components are similar to the non-seasonal components but they are *backshifts* of the seasonal period. For example, if you wanted to forecast sales for some product in February, you might predict that based on last February's sales. Click [here](https://online.stat.psu.edu/stat510/lesson/4/4.1) to learn more about seasonal ARIMA models. 
+If your time series data has a seasonal pattern, then additional seasonal components (P,D,Q)m are added to the model. The seasonal components are similar to the non-seasonal components but they are *backshifts* of the seasonal period. For example, if you wanted to forecast sales for some product in February, you might predict that based on last February's sales. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+PDQm_tribble <- tribble(
+  ~Parameter, ~Component, ~Definition,
+  "P","Seasonal AutoRegression","The number of seasonal lags to include in the model a.k.a the seasonal lag order.",
+  "D","Integrated","The number of times the data has been seasonally-differenced to make it stationary \na.k.a the seasonal differenced order.",
+  "Q","Seasonal Moving Average","The number of past seasonal errors to include in the model \ni.e. the size of the moving average window \na.k.a the seasonal moving average order.",
+  "m","Time Steps","The number of time steps for a single seasonal period."
+)
+
+# knitr::kable(pdq_tribble, align = "ccc")
+
+PDQm_tribble %>%
+  kbl(caption = "Seasonal ARIMA Parameters") %>%
+  kable_paper(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+```
+
+> ***It is best practice to apply only one order of seasonal differencing and up to two first differences to make data stationary. Click [here](https://machinelearningmastery.com/sarima-for-time-series-forecasting-in-python/) to learn more about seasonal ARIMA models.***
 
 ---
 
@@ -126,9 +242,9 @@ If your time series data has a seasonal pattern, then additional seasonal compon
 
 There are multiple ways to change time series data so that it becomes stationary. Some data show increasing variation as the level increases or just have unstable variance overall. In these cases, transforming the data to reduce the variance can be helpful. 
 
-- Transformations make fluctuations approximately even across the whole series
-- Simple transformations include square root, cube root, log, and inverse increasing in strength in this order
-- Box-Cox transformations do the same thing but are more complex mathematically 
+- Transformations make fluctuations approximately even across the whole series.
+- Simple transformations include square root, cube root, log, and inverse increasing in strength in this order.
+- Box-Cox transformations do the same thing but are more complex mathematically.
 
 The following examples will utilize a dataset containing the total monthly generation of electricity in kWh from 1973-2013 in the United States to show how to apply a transformation. 
 
@@ -234,11 +350,11 @@ As noted earlier, ARIMA models require the data to be stationary. If a time seri
 
 ## 3.1  fpp2 Method: Non-seasonal differencing
 
-The following examples will use a `fpp2` dataset containing the annual female murder rate per 100,000 people in the United States from 1950-2004. 
+The following examples will use a dataset containing the annual female murder rate per 100,000 people in the United States from 1950-2004. 
 
 ```{r}
 # Plot female murder rate
-m1 <- autoplot(wmurders) + 
+m1 <- autoplot(fpp2::wmurders) + 
     labs(title="Female murder rate")
 
 # Plot the differenced murder rate
@@ -255,7 +371,7 @@ m4 <- ggAcf(diff(wmurders))
 plot_grid(m1, m2, m3, m4, ncol=2)
 ```
 
-> ***Does the differenced data look stationary? Does the ACF plot of the differenced data show significant autocorrelation left?***
+> ***Does the differenced data look stationary?***
 
 ## 3.2 fpp3 Method: Non-seasonal differencing
 
@@ -295,11 +411,13 @@ m4 <- wmurders_tsbl %>%
 plot_grid(m1, m2, m3, m4, ncol=2)
 ```
 
+> ***Does the ACF plot of the differenced data show significant autocorrelation left?***
+
 ## 3.3 modeltime Method: Non-seasonal differencing
 
 *Note: The `modeltime` framework can apply transformations during the model creation process as opposed to `fpp2` and `fpp3` where it is a separate process done beforehand. However, in this example the data will be transformed prior to model creation for illustrative purposes.*
 
-```{r warning=FALSE, message=FALSE, fig.height=8}
+```{r warning=FALSE, message=FALSE, fig.height=8, fig.width=7.5}
 # Convert ts to tibble
 wmurders_tbl <- fpp2::wmurders %>%
     tk_tbl(rename_index = "year") %>%
@@ -354,16 +472,17 @@ m4 <- wmurders_tbl %>%
 plot_grid(m1, m2, m3, m4, ncol=2, rel_heights = c(1, 1.5))
 ```
 
-> ***The differenced data shows clear stationarity. The ACF & PACF plots of the differenced data shows very little autocorrelation as well.***
+> ***The differenced data shows clear stationarity. The ACF & PACF plots of the differenced data shows very little autocorrelation as well with almost all lags within the white noise significance boundaries.***
 
 ---
 
 # 4. Seasonal differencing for stationarity
 
-A seasonal difference is the difference between an observation and the previous observation from the same season.
+A first difference is the change between an observation and the next observation. A seasonal difference is the change between an observation and the previous observation from the prior season.
 
-- First differences are the change between an observation and the next observation.
-- Seasonal differences are the change between one year to the next year.
+If a time series is non-seasonal but is also non-stationary, then you would apply first differencing as many times as necessary to make it stationary. 
+
+If a time series is seasonal and thus by definition non-stationary, then apply a seasonal difference to try and make it stationary. If this seasonally differenced series is still non-stationary, then apply apply first differencing until it is stationary. 
 
 The following examples will utilize a dataset containing the monthly corticosteroid expenditure in millions of dollars in Australia from 1991-2008. 
 
@@ -443,7 +562,7 @@ h02_tsbl_long %>%
 
 ## 4.3 modeltime Method: Seasonal Differencing
 
-```{r fig.height=8, fig.width=8}
+```{r fig.height=8, fig.width=7.5}
 # Convert tsibble to tibble
 h02_tbl_long <- h02_tsbl_long %>%
   tk_tbl(preserve_index = FALSE) %>%
@@ -465,6 +584,8 @@ h02_tbl_long %>%
 ---
 
 # 5. The ARIMA Modeling Process
+
+There are two methods for fitting ARIMA models to time series data. One method is a manual process which involves analyzing the ACF and PACF plots to select a model based on what is found. The other method is to use the Hyndman-Khandakar algorithm to automatically choose an ARIMA model. It's important to know that automatically choosing a model does not guarantee the best fitting model as we will see down below. 
 
 ## 5.1 Manual ARIMA Modeling
 
@@ -491,7 +612,9 @@ manual_arima_tribble %>%
 
 ## 5.2 Automatic ARIMA Modeling
 
-All three forecasting frameworks rely on the Hyndman-Khandakar algorithm to automatically choose an ARIMA model. The algorithm uses a combination of unit root tests, minimization of the AICc score, as well as the minimization of the maximum likelihood estimation to automatically choose the best model. However, it is important to know that it uses approximations and a stepwise approach to speed up the search for a model by default. It's possible to search a much larger set of ARIMA models if you do not use either methods but it will take longer. Here's a general procedure for automatically choosing an ARIMA model for non-seasonal data: 
+All three forecasting frameworks rely on the [Hyndman-Khandakar algorithm](https://otexts.com/fpp3/arima-r.html) to automatically choose an ARIMA model. The algorithm uses a combination of unit root tests, minimization of the AICc score, as well as [maximum likelihood estimation](https://towardsdatascience.com/a-gentle-introduction-to-maximum-likelihood-estimation-9fbff27ea12f) to automatically choose the best model. 
+
+It is important to know that it also uses approximations and a stepwise approach to speed up the search for a model by default. It's possible to search a much larger set of ARIMA models if you do not use either methods but it will take longer. Here's a general procedure for automatically choosing an ARIMA model for non-seasonal data: 
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 auto_arima_tribble <- tribble(
@@ -643,7 +766,7 @@ model_fit_arima <- model_spec_arima %>%
 model_fit_arima
 ```
 
-```{r fig.height=6, message=FALSE}
+```{r fig.height=6, fig.width= 7.5, message=FALSE}
 # 4. Plot ACF of the residuals and do a portmanteau test to make sure they look like white noise. If not white noise, then search a larger set of models to choose from. 
 
 # Create table of model to use
@@ -792,7 +915,7 @@ eu_retail_tsbl_plot %>%
   labs(title = "European retail trade index", x = "Quarter", y = "")
 ```
 
-> ***The first plot shows the original trade index series which is non-stationary as it shows a clear upwards then downwards trend. The second plot shows that the first seasonally-differenced annual change in index series is still non-stationary showing an overall downward trend. The third plot shows that the seasonally-differenced and first-differenced change in index series is finally stationary. Let's apply two different automatically chosen ARIMA models.***
+> ***The first plot shows the original trade index series which is non-stationary as it shows a clear upwards then downwards trend as well as some seasonality. The second plot shows that the seasonally-differenced annual change in index series is still non-stationary showing an overall downward trend. The third plot shows that the seasonally-differenced and first-differenced change in index series is finally stationary. Let's apply two different automatically chosen ARIMA models.***
 
 ```{r}
 # 4a. Automatically fit multiple models and find the lowest AICc with approximation + stepwise approach.
@@ -853,7 +976,7 @@ fit_eu_retail_011_011 <- eu_retail_tsbl %>%
 # Check residuals
 fit_eu_retail_011_011 %>% 
   gg_tsresiduals() + 
-  ggtitle("Residuals from fitted ARIMA(0,1,1)(0,1,1) model")
+  ggtitle("Residuals from fitted ARIMA(0,1,1)(0,1,1)[4] model")
 ```
 
 > ***The ACF plot shows a significant spike at lag 2 and a fairly significant spike at lag 3. This suggests that more non-seasonal terms would result in a better model. At this point, adding an additional non-seasonal term step-by-step in a sequential fashion and then minimizing the AICc score would be a good plan of action. In this case, since we already know that an ARIMA(0,1,3)(0,1,1)[4] results in the lowest AICc, we'll skip over analyzing an ARIMA(0,1,2)(0,1,1)[4] model for now.***
@@ -1140,13 +1263,20 @@ arima_models_refit_tbl %>%
 
 # 8. Conclusions about ARIMA models
 
-ARIMA and ETS models are some of the most widely used forecasting techniques. They are complementary to each other: ARIMA models focus on the autocorrelations in the data whereas ETS models focus on the trend and seasonality. Every forecaster should consider trying ETS and ARIMA models before jumping to more complex methods like machine-learning and neural networks. 
+ARIMA and ETS models are some of the most widely used forecasting techniques. They are complementary to each other: ARIMA models focus on the autocorrelations in the data whereas ETS models focus on the trend and seasonality. 
 
-Here are some of my thoughts about ARIMA models and the three forecasting frameworks utilized in this article:
+Here are some of my thoughts about ARIMA models:
 
 - Visualizing and identifying different patterns in your time series data is always the first step in forecasting.
 - The [Hyndman-Khandakar algorithm](https://otexts.com/fpp3/arima-r.html) for automatic ARIMA modeling does not always choose a model with the best AICc score.
+- A model with the best AICc that was fit on a training set may not be the best model when fitting on a test set.
 - Just because the residuals of a model do not pass every test for white noise does not mean the model is unsuitable for forecasting; it is certainly possible that the best-performing model will fail a test or two.
+
+Here are some of my thoughts about the three forecasting frameworks utilized in this article:
+
 - `fpp2` is considered to be outdated and is no longer maintained; `fpp3` and `modeltime`+`timetk` are currently maintained.
-- The `fpp2` and `fpp3` frameworks focus more on minimizing the AICc for ARIMA model selection whereas `modeltime`+`timetk` focuses more on accuracy measures on a test set.
+- The `fpp2` and `fpp3` frameworks focus more on minimizing the AICc for ARIMA model selection whereas `modeltime`+`timetk` focuses more on accuracy measures on an out-of-sample test set.
 - All three frameworks `fpp2`, `fpp3`, and `modeltime`+`timetk` rely on the `forecast` package and thus will give similar results; however, they all have different methodologies with their own respective strengths and weaknesses.
+
+Every forecaster should at least consider trying ETS and ARIMA models before jumping to more complex methods like machine-learning and neural networks. This is especially true in situations where you are [forecasting with univariate data](https://machinelearningmastery.com/findings-comparing-classical-and-machine-learning-methods-for-time-series-forecasting/) and where scaling to many time series is an issue. 
+
