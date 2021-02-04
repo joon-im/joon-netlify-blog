@@ -2,7 +2,7 @@ baseurl: /
 languageCode: en-us
 title: "Joon's Blog"
 theme: hugo-lithium
-googleAnalytics: ''
+googleAnalytics: 'UA-180467778-1'
 disqusShortname: ''
 ignoreFiles:
   - \.Rmd$
