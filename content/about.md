@@ -6,3 +6,4 @@ title: About
 Hello reader! My name's Joon. You've stumbled upon my data science blog. I hope you find something useful here. 
 
 [LinkedIn](https://www.linkedin.com/in/joonhoim/)
+[R-Bloggers](https://www.r-bloggers.com)
